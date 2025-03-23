@@ -1,0 +1,6 @@
+fastapi[all]
+python-decouple
+pymongo
+pandas
+numpy
+scikit-learn

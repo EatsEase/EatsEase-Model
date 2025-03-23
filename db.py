@@ -10,3 +10,4 @@ client = MongoClient(
 mongo_connection = client["EatsEase"]
 
 user_profile_connection = mongo_connection["UserProfile"]
+menu_connection = mongo_connection["Menu"]

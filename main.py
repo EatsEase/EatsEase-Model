@@ -12,7 +12,7 @@ from utils import log_memory_usage
 app = FastAPI()
 
 # Load precompute data
-df = pd.read_excel("unique_menu_model.xlsx")
+df = pd.read_excel("unique_with_cloud_image.xlsx")
 menu_embeddings = np.load("menu_embeddings.npy")
 like_weight = 1.0
 dislike_weight = 0.8

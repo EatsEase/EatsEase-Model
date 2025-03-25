@@ -6,7 +6,7 @@ from typing import List
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
-from db import user_profile_connection, menu_connection
+from db import user_profile_collection, menu_collection
 from utils import log_memory_usage
 
 app = FastAPI()
@@ -32,7 +32,7 @@ app.add_middleware(
 def recommend(username: str):
     log_memory_usage("🔄 Start of /recommend route")
 
-    user = user_profile_connection.find_one({"user_name": username})
+    user = user_profile_collection.find_one({"user_name": username})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

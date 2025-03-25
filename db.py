@@ -1,13 +1,17 @@
 from decouple import config
-from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 
-client = MongoClient(
-    config("MONGO_URL", cast=str, default="mongodb://localhost:27017"),
+# MongoDB URI
+MONGO_URL = config("MONGO_URL", cast=str, default="mongodb://localhost:27017")
+
+# Async client
+client = AsyncIOMotorClient(
+    MONGO_URL,
     tls=True,
-    tlsAllowInvalidCertificates=True,
+    tlsAllowInvalidCertificates=True  # ⚠️ only for dev/self-signed certs
 )
 
-mongo_connection = client["EatsEase"]
-
-user_profile_connection = mongo_connection["UserProfile"]
-menu_connection = mongo_connection["Menu"]
+# Get your database and collections
+db = client["EatsEase"]
+user_profile_collection = db["UserProfile"]
+menu_collection = db["Menu"]

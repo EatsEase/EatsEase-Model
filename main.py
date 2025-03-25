@@ -39,6 +39,120 @@ async def recommend(username: str):
     liked_menus = user.get("liked_menu", [])
     disliked_menus = user.get("disliked_menu", [])
     allergies = set(user.get("allergies", []))
+    food_preferences = set(user.get("food_preferences", []))
+
+    log_memory_usage("📋 Retrieved liked/disliked menus from DB")
+
+    liked_indices = [i for i, name in enumerate(df["menu_name"]) if name in liked_menus]
+    disliked_indices = [i for i, name in enumerate(df["menu_name"]) if name in disliked_menus]
+
+    liked_vectors = menu_embeddings[liked_indices] if liked_indices else np.zeros_like(menu_embeddings[0])
+    disliked_vectors = menu_embeddings[disliked_indices] if disliked_indices else np.zeros_like(menu_embeddings[0])
+
+    log_memory_usage("📊 Vectors loaded for liked/disliked menus")
+
+    user_vector = np.zeros_like(menu_embeddings[0])
+    if len(liked_vectors) > 0:
+        user_vector += like_weight * np.mean(liked_vectors, axis=0)
+    if len(disliked_vectors) > 0:
+        user_vector -= dislike_weight * np.mean(disliked_vectors, axis=0)
+    user_vector = user_vector.reshape(1, -1)
+
+    log_memory_usage("🧠 User vector computed")
+
+    scores = cosine_similarity(user_vector, menu_embeddings).flatten()
+    sorted_indices = scores.argsort()[::-1]
+
+    def has_allergy(menu_allergens):
+        menu_allergy_set = set(str(menu_allergens).split(", "))
+        return not allergies.isdisjoint(menu_allergy_set)
+
+    def matches_food_preference(category_string):
+        category_list = set(str(category_string).split(","))
+        return not food_preferences.isdisjoint(category_list)
+
+    recommendations = []
+
+    # Top 10 from food_preferences only
+    for i in sorted_indices:
+        name = df.iloc[i]["menu_name"]
+        category = df.iloc[i]["menu_category"]
+        if name in liked_menus or name in disliked_menus:
+            continue
+        if has_allergy(df.iloc[i].get("matched_allergies", "")):
+            continue
+        if not matches_food_preference(category):
+            continue
+
+        recommendations.append((
+            i,
+            name,
+            df.iloc[i]["ingredients"],
+            df.iloc[i]["characteristics"],
+            category,
+            scores[i]
+        ))
+        if len(recommendations) >= 10:
+            break
+
+    similarity_threshold_2 = recommendations[-1][-1] - 0.03 if len(recommendations) >= 10 else 1.0
+
+    # Final 5: diverse menus not in food_preferences and lower score
+    for i in sorted_indices:
+        name = df.iloc[i]["menu_name"]
+        category = df.iloc[i]["menu_category"]
+        score = scores[i]
+        if name in liked_menus or name in disliked_menus:
+            continue
+        if name in [r[1] for r in recommendations]:
+            continue
+        if has_allergy(df.iloc[i].get("matched_allergies", "")):
+            continue
+        if matches_food_preference(category):
+            continue
+        if score >= similarity_threshold_2:
+            continue
+
+        recommendations.append((
+            i,
+            name,
+            df.iloc[i]["ingredients"],
+            df.iloc[i]["characteristics"],
+            category,
+            score
+        ))
+        if len(recommendations) >= 15:
+            break
+
+    log_memory_usage("✅ Recommendations generated")
+
+    results = [
+        {
+            "menu_name": name,
+            "score": float(score),
+            "ingredients": ingredients,
+            "characteristics": characteristics,
+            "menu_category": category
+        }
+        for i, name, ingredients, characteristics, category, score in recommendations
+    ]
+
+    log_memory_usage("🚀 Returning results")
+    return {"results": results}
+
+
+@app.get("/api/recommendation/next_meal/{username}")
+async def next_meal(username: str):
+    log_memory_usage("🔄 Start of /recommend route")
+
+    user = await user_profile_collection.find_one({"user_name": username})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    liked_menus = user.get("liked_menu", [])
+    disliked_menus = user.get("disliked_menu", [])
+    allergies = set(user.get("allergies", []))
+    temp_recommend = set(user.get("temp_recommend", []))
 
     log_memory_usage("📋 Retrieved liked/disliked menus from DB")
 
@@ -61,112 +175,26 @@ async def recommend(username: str):
 
     scores = cosine_similarity(user_vector, menu_embeddings).flatten()
 
-    # ----- Diversity Enforcement with Score Thresholding + Allergy Filter -----
-    category_seen = set()
-    recommendations = []
     sorted_indices = scores.argsort()[::-1]
 
     def has_allergy(menu_allergens):
         menu_allergy_set = set(str(menu_allergens).split(", "))
         return not allergies.isdisjoint(menu_allergy_set)
 
-    # Get top 5 exact matches first (regardless of category)
     for i in sorted_indices:
         name = df.iloc[i]["menu_name"]
-        if name in liked_menus or name in disliked_menus:
+        if name in liked_menus or name in disliked_menus or name in temp_recommend:
             continue
         if has_allergy(df.iloc[i].get("matched_allergies", "")):
             continue
 
-        recommendations.append(
-            (
-                i,
-                name,
-                df.iloc[i]["ingredients"],
-                df.iloc[i]["characteristics"],
-                df.iloc[i]["menu_category"],
-                scores[i]
-            )
+        # Update temp_recommend
+        temp_recommend.add(name)
+        await user_profile_collection.update_one(
+            {"user_name": username},
+            {"$set": {"temp_recommend": list(temp_recommend)}}
         )
-        if len(recommendations) >= 5:
-            break
+        log_memory_usage("🚀 Returning results")
+        return {"menu_name": name}
 
-    # Use the score of the 5th item as threshold (or lower by margin)
-    similarity_threshold_1 = recommendations[-1][-1] - 0.01 if len(recommendations) >= 5 else 1.0
-    similarity_threshold_2 = similarity_threshold_1 - 0.02
-
-    # Continue adding more recommendations with diversity enforcement
-    for i in sorted_indices:
-        name = df.iloc[i]["menu_name"]
-        if name in liked_menus or name in disliked_menus:
-            continue
-        if name in [r[1] for r in recommendations]:
-            continue
-        if has_allergy(df.iloc[i].get("matched_allergies", "")):
-            continue
-
-        category = df.iloc[i]["menu_category"]
-        score = scores[i]
-
-        if len(recommendations) < 10:
-            if category in category_seen:
-                continue
-            if score >= similarity_threshold_1:
-                continue
-        elif len(recommendations) < 15:
-            if score >= similarity_threshold_2:
-                continue
-
-        recommendations.append(
-            (
-                i,
-                name,
-                df.iloc[i]["ingredients"],
-                df.iloc[i]["characteristics"],
-                category,
-                score
-            )
-        )
-        category_seen.add(category)
-        if len(recommendations) >= 15:
-            break
-
-    # Fallback to fill up to 15 if needed
-    if len(recommendations) < 15:
-        for i in sorted_indices:
-            name = df.iloc[i]["menu_name"]
-            if name in liked_menus or name in disliked_menus:
-                continue
-            if name in [r[1] for r in recommendations]:
-                continue
-            if has_allergy(df.iloc[i].get("matched_allergies", "")):
-                continue
-
-            recommendations.append(
-                (
-                    i,
-                    name,
-                    df.iloc[i]["ingredients"],
-                    df.iloc[i]["characteristics"],
-                    df.iloc[i]["menu_category"],
-                    scores[i]
-                )
-            )
-            if len(recommendations) >= 15:
-                break
-
-    log_memory_usage("✅ Recommendations generated")
-
-    results = [
-        {
-            "menu_name": name,
-            "score": float(score),
-            "ingredients": ingredients,
-            "characteristics": characteristics,
-            "menu_category": category
-        }
-        for i, name, ingredients, characteristics, category, score in recommendations
-    ]
-
-    log_memory_usage("🚀 Returning results")
-    return {"results": results}
+    raise HTTPException(status_code=404, detail="No suitable menu found")

@@ -29,10 +29,10 @@ app.add_middleware(
 
 
 @app.get("/api/recommendation/menu/{username}")
-def recommend(username: str):
+async def recommend(username: str):
     log_memory_usage("🔄 Start of /recommend route")
 
-    user = user_profile_collection.find_one({"user_name": username})
+    user = await user_profile_collection.find_one({"user_name": username})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

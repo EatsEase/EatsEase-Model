@@ -7,6 +7,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
 from db import user_profile_connection, menu_connection
+from utils import log_memory_usage
 
 app = FastAPI()
 
@@ -29,34 +30,36 @@ app.add_middleware(
 
 @app.get("/api/recommendation/menu/{username}")
 def recommend(username: str):
+    log_memory_usage("🔄 Start of /recommend route")
+
     user = user_profile_connection.find_one({"user_name": username})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    liked_menus = user.get("liked_menu")
-    disliked_menus = user.get("disliked_menu")
 
-    liked_indices = [i for i, name in enumerate(
-        df["menu_name"]) if name in liked_menus]
-    disliked_indices = [i for i, name in enumerate(
-        df["menu_name"]) if name in disliked_menus]
+    liked_menus = user.get("liked_menu", [])
+    disliked_menus = user.get("disliked_menu", [])
 
-    liked_vectors = menu_embeddings[liked_indices] if liked_indices else np.zeros_like(
-        menu_embeddings[0])
-    disliked_vectors = menu_embeddings[disliked_indices] if disliked_indices else np.zeros_like(
-        menu_embeddings[0])
+    log_memory_usage("📋 Retrieved liked/disliked menus from DB")
+
+    liked_indices = [i for i, name in enumerate(df["menu_name"]) if name in liked_menus]
+    disliked_indices = [i for i, name in enumerate(df["menu_name"]) if name in disliked_menus]
+
+    liked_vectors = menu_embeddings[liked_indices] if liked_indices else np.zeros_like(menu_embeddings[0])
+    disliked_vectors = menu_embeddings[disliked_indices] if disliked_indices else np.zeros_like(menu_embeddings[0])
+
+    log_memory_usage("📊 Vectors loaded for liked/disliked menus")
 
     user_vector = np.zeros_like(menu_embeddings[0])
-
     if len(liked_vectors) > 0:
         user_vector += like_weight * np.mean(liked_vectors, axis=0)
-
     if len(disliked_vectors) > 0:
         user_vector -= dislike_weight * np.mean(disliked_vectors, axis=0)
-
     user_vector = user_vector.reshape(1, -1)
+
+    log_memory_usage("🧠 User vector computed")
+
     scores = cosine_similarity(user_vector, menu_embeddings).flatten()
 
-    top_n = 10
     recommendations = sorted(
         [
             (
@@ -72,16 +75,21 @@ def recommend(username: str):
         ],
         key=lambda x: x[-1],
         reverse=True
-    )[:top_n]
+    )[:10]
 
-    results = []
-    for i, name, ingredients, characteristics, category, score in recommendations:
-        results.append({
+    log_memory_usage("✅ Recommendations generated")
+
+    results = [
+        {
             "menu_name": name,
             "score": float(score),
             "ingredients": ingredients,
             "characteristics": characteristics,
             "menu_category": category
-        })
+        }
+        for i, name, ingredients, characteristics, category, score in recommendations
+    ]
 
+    log_memory_usage("🚀 Returning results")
     return {"results": results}
+

@@ -4,3 +4,4 @@ pymongo
 pandas
 numpy
 scikit-learn
+openpyxl

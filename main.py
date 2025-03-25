@@ -42,6 +42,23 @@ async def recommend(username: str):
     food_preferences = set(user.get("food_preferences", []))
 
     log_memory_usage("📋 Retrieved liked/disliked menus from DB")
+    
+    def is_safe_menu(menu_allergens):
+        menu_allergy_set = set(str(menu_allergens).split(", "))
+        return allergies.isdisjoint(menu_allergy_set)
+    
+    if liked_menus == [] and disliked_menus == []:
+        candidates = df[
+            df["menu_category"].apply(
+                lambda x: bool(set(str(x).split(",")).intersection(food_preferences))
+            ) &  # menu must match at least one preferred category
+            df["matched_allergies"].apply(is_safe_menu)  # menu must not conflict with allergies
+        ]
+
+        sampled = candidates.sample(n=min(5, len(candidates)))
+        return {
+            "results": sampled[["menu_name", "menu_category"]].to_dict(orient="records")
+        }
 
     liked_indices = [i for i, name in enumerate(df["menu_name"]) if name in liked_menus]
     disliked_indices = [i for i, name in enumerate(df["menu_name"]) if name in disliked_menus]

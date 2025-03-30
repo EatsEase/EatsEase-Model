@@ -15,7 +15,7 @@ app = FastAPI()
 # Load precompute data
 df = pd.read_excel("unique_with_cloud_image.xlsx")
 menu_embeddings = np.load("menu_embeddings.npy")
-like_weight = 1.0
+like_weight = 1
 dislike_weight = 0.8
 
 origins = ["*"]
@@ -477,6 +477,7 @@ async def leave_one_out_evaluation_loo4_multiple_users():
 
             # Create a new list excluding the target menu
             reduced_likes = [menu for menu in liked_menus if menu != target_menu]
+            reduced_dislikes = [menu for menu in disliked_menus if menu != target_menu]
 
             # ✅ Step 2: Generate user vector based on reduced likes
             liked_indices = [
@@ -491,7 +492,7 @@ async def leave_one_out_evaluation_loo4_multiple_users():
             disliked_indices = [
                 i
                 for i, name in enumerate(df["menu_name"])
-                if name in disliked_menus
+                if name in reduced_dislikes
             ]
             disliked_vectors = (
                 menu_embeddings[disliked_indices]
@@ -527,7 +528,7 @@ async def leave_one_out_evaluation_loo4_multiple_users():
             for i in sorted_indices:
                 name = df.iloc[i]["menu_name"]
                 category = df.iloc[i]["menu_category"]
-                if name in reduced_likes or name in disliked_menus:
+                if name in reduced_likes or name in reduced_dislikes:
                     continue
                 if has_allergy(df.iloc[i].get("matched_allergies", "")):
                     continue
@@ -554,7 +555,7 @@ async def leave_one_out_evaluation_loo4_multiple_users():
                 name = df.iloc[i]["menu_name"]
                 category = df.iloc[i]["menu_category"]
                 score = scores[i]
-                if name in reduced_likes or name in disliked_menus:
+                if name in reduced_likes or name in reduced_dislikes:
                     continue
                 if name in [r[1] for r in recommendations]:
                     continue

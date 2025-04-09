@@ -1,9 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_curve
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
@@ -16,7 +15,7 @@ app = FastAPI()
 df = pd.read_excel("unique_with_cloud_image.xlsx")
 menu_embeddings = np.load("menu_embeddings.npy")
 like_weight = 1
-dislike_weight = 0.8
+dislike_weight = 1
 
 origins = ["*"]
 
@@ -54,7 +53,7 @@ async def recommend(username: str):
             ) &  # menu must match at least one preferred category
             df["matched_allergies"].apply(is_safe_menu)  # menu must not conflict with allergies
         ]
-        sampled = candidates.sample(n=min(5, len(candidates)))
+        sampled = candidates.sample(n=min(2, len(candidates)))
         cold_start = sampled[["menu_name", "menu_category"]].to_dict(orient="records")
         await user_profile_collection.update_one(
         {"_id": user["_id"]},  # Use user's ObjectId to update
@@ -102,8 +101,6 @@ async def recommend(username: str):
             continue
         if has_allergy(df.iloc[i].get("matched_allergies", "")):
             continue
-        if not matches_food_preference(category):
-            continue
 
         recommendations.append((
             i,
@@ -113,10 +110,10 @@ async def recommend(username: str):
             category,
             scores[i]
         ))
-        if len(recommendations) >= 10:
+        if len(recommendations) >= 2:
             break
-    similarity_threshold_2 = recommendations[-1][-1] - 0.03 if len(recommendations) >= 10 else 1.0
-    # Final 5: diverse menus not in food_preferences and lower score
+    similarity_threshold_2 = recommendations[-1][-1] - 0.03 if len(recommendations) >= 2 else 1.0
+    # Final 3: diverse menus not in food_preferences and lower score
     for i in sorted_indices:
         name = df.iloc[i]["menu_name"]
         category = df.iloc[i]["menu_category"]
@@ -140,7 +137,7 @@ async def recommend(username: str):
             category,
             score
         ))
-        if len(recommendations) >= 15:
+        if len(recommendations) >= 3:
             break
 
     log_memory_usage("✅ Recommendations generated")
@@ -430,7 +427,7 @@ async def leave_one_out_evaluation_loo4(username: str):
 
 @app.get("/api/evaluate/loo4_multiple_users")
 async def leave_one_out_evaluation_loo4_multiple_users():
-    threshold = 0.5  # Define similarity threshold
+    threshold = 0.1934  # Define similarity threshold
     log_memory_usage("🔄 Start of Multi-User LOO4 Evaluation")
 
     # List of users for evaluation
@@ -446,6 +443,9 @@ async def leave_one_out_evaluation_loo4_multiple_users():
     
     y_true_global = []
     y_pred_global = []
+    
+    similarity_scores_liked = []
+    similarity_scores_disliked = []
 
     # 🎯 Loop through all users in user_list
     for username in user_list:
@@ -546,36 +546,36 @@ async def leave_one_out_evaluation_loo4_multiple_users():
                 if len(recommendations) >= 10:
                     break
 
-            similarity_threshold_2 = (
-                recommendations[-1][-1] - 0.03 if len(recommendations) >= 10 else 1.0
-            )
+            # similarity_threshold_2 = (
+            #     recommendations[-1][-1] - 0.03 if len(recommendations) >= 10 else 1.0
+            # )
 
-            # Final 5: diverse menus not in food_preferences and lower score
-            for i in sorted_indices:
-                name = df.iloc[i]["menu_name"]
-                category = df.iloc[i]["menu_category"]
-                score = scores[i]
-                if name in reduced_likes or name in reduced_dislikes:
-                    continue
-                if name in [r[1] for r in recommendations]:
-                    continue
-                if has_allergy(df.iloc[i].get("matched_allergies", "")):
-                    continue
-                if matches_food_preference(category):
-                    continue
-                if score >= similarity_threshold_2:
-                    continue
+            # # Final 5: diverse menus not in food_preferences and lower score
+            # for i in sorted_indices:
+            #     name = df.iloc[i]["menu_name"]
+            #     category = df.iloc[i]["menu_category"]
+            #     score = scores[i]
+            #     if name in reduced_likes or name in reduced_dislikes:
+            #         continue
+            #     if name in [r[1] for r in recommendations]:
+            #         continue
+            #     if has_allergy(df.iloc[i].get("matched_allergies", "")):
+            #         continue
+            #     if matches_food_preference(category):
+            #         continue
+            #     if score >= similarity_threshold_2:
+            #         continue
 
-                recommendations.append((
-                    i,
-                    name,
-                    df.iloc[i]["ingredients"],
-                    df.iloc[i]["characteristics"],
-                    category,
-                    score,
-                ))
-                if len(recommendations) >= 15:
-                    break
+            #     recommendations.append((
+            #         i,
+            #         name,
+            #         df.iloc[i]["ingredients"],
+            #         df.iloc[i]["characteristics"],
+            #         category,
+            #         score,
+            #     ))
+            #     if len(recommendations) >= 15:
+            #         break
 
             recommended_menus = [r[1] for r in recommendations]
 
@@ -601,7 +601,10 @@ async def leave_one_out_evaluation_loo4_multiple_users():
 
             # ✅ Step 9: Classify based on threshold
             predicted_label = "like" if target_similarity >= threshold else "dislike"
-
+            if actual_label == "like":
+                similarity_scores_liked.append(target_similarity)
+            else:
+                similarity_scores_disliked.append(target_similarity)
             # ✅ Step 10: Track results for analysis
             y_true_user.append(actual_label)
             y_pred_user.append(predicted_label)
@@ -645,8 +648,43 @@ async def leave_one_out_evaluation_loo4_multiple_users():
     hit_rate_liked_top10 = total_hits_liked / total_tests_liked if total_tests_liked > 0 else 0
     hit_rate_disliked_top10 = total_hits_disliked / total_tests_disliked if total_tests_disliked > 0 else 0
     overall_hit_rate = (total_hits_liked + total_hits_disliked) / (total_tests_liked + total_tests_disliked)
+    
+    # combine_scores = np.array(similarity_scores_liked + similarity_scores_disliked)
+    # labels = np.array([1] * len(similarity_scores_liked) + [0] * len(similarity_scores_disliked))
+    # # Compute ROC curve
+    # fpr, tpr, thresholds = roc_curve(labels, combine_scores)
+
+    # # Compute Youden's J statistic
+    # youden_index = tpr - fpr
+    # optimal_idx = np.argmax(youden_index)
+    # optimal_threshold = thresholds[optimal_idx]
+
+    # # Plot ROC curve
+    # plt.figure(figsize=(8, 6))
+    # plt.plot(fpr, tpr, label="ROC Curve")
+    # plt.scatter(fpr[optimal_idx], tpr[optimal_idx], color='red', label=f'Optimal Threshold: {optimal_threshold:.4f}')
+    # plt.xlabel("False Positive Rate (FPR)")
+    # plt.ylabel("True Positive Rate (TPR)")
+    # plt.title("ROC Curve and Optimal Threshold")
+    # plt.legend()
+    # plt.grid()
+    # plt.show()
 
     log_memory_usage("✅ Multi-User LOO4 Evaluation completed (With Disliked Check)")
+    plt.figure(figsize=(10, 6))
+    plt.hist(similarity_scores_liked, bins=30, alpha=0.5, label='Liked', color='blue')
+    plt.hist(similarity_scores_disliked, bins=30, alpha=0.5, label='Disliked', color='red')
+    plt.axvline(threshold, color='black', linestyle='dashed', linewidth=2, label='Threshold')
+    plt.xlabel("Cosine Similarity Score")
+    plt.ylabel("Frequency")
+    plt.title("Similarity Score Distribution: Liked vs Disliked Menus")
+    plt.legend()
+    plt.grid()
+    plt.show()
+    
+    plot_path = "similarity_distribution.png"
+    plt.savefig(plot_path)
+    plt.close()
 
     return {
         "hit_rate_liked_top10": round(float(hit_rate_liked_top10), 2),

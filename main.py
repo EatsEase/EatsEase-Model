@@ -432,6 +432,7 @@ async def leave_one_out_evaluation_loo4_multiple_users():
 
     # List of users for evaluation
     user_list = ["savetang", "Tanabodee", "mhuyong", "junior1", "tunior", "bubu1234", "dudu1234", "thanidaza", "punn", "tak", "luck", "wik", "hamm", "prai", "will"]
+    # user_list = ["eval2"]
 
     # Initialize aggregate variables
     total_hits_liked = 0
@@ -460,6 +461,10 @@ async def leave_one_out_evaluation_loo4_multiple_users():
         disliked_menus = user.get("disliked_menu", [])
         allergies = set(user.get("allergies", []))
         food_preferences = set(user.get("food_preferences", []))
+        cold_start = user.get("cold_start", [])
+        cold_start_menu = []
+        for i in cold_start:
+            cold_start_menu.append(i["menu_name"])
 
         hits_liked = 0
         hits_disliked = 0
@@ -473,6 +478,8 @@ async def leave_one_out_evaluation_loo4_multiple_users():
         # 🎯 Step 1: Iterate through both liked and disliked menus for evaluation
         for target_menu in liked_menus + disliked_menus:
             # Define ground truth label
+            if target_menu in cold_start_menu:
+                continue
             actual_label = "like" if target_menu in liked_menus else "dislike"
 
             # Create a new list excluding the target menu
@@ -543,7 +550,7 @@ async def leave_one_out_evaluation_loo4_multiple_users():
                     category,
                     scores[i],
                 ))
-                if len(recommendations) >= 10:
+                if len(recommendations) >= 50:
                     break
 
             # similarity_threshold_2 = (
@@ -649,15 +656,16 @@ async def leave_one_out_evaluation_loo4_multiple_users():
     hit_rate_disliked_top10 = total_hits_disliked / total_tests_disliked if total_tests_disliked > 0 else 0
     overall_hit_rate = (total_hits_liked + total_hits_disliked) / (total_tests_liked + total_tests_disliked)
     
-    # combine_scores = np.array(similarity_scores_liked + similarity_scores_disliked)
-    # labels = np.array([1] * len(similarity_scores_liked) + [0] * len(similarity_scores_disliked))
-    # # Compute ROC curve
-    # fpr, tpr, thresholds = roc_curve(labels, combine_scores)
+    combine_scores = np.array(similarity_scores_liked + similarity_scores_disliked)
+    labels = np.array([1] * len(similarity_scores_liked) + [0] * len(similarity_scores_disliked))
+    # Compute ROC curve
+    fpr1, tpr, thresholds = roc_curve(labels, combine_scores)
 
-    # # Compute Youden's J statistic
-    # youden_index = tpr - fpr
-    # optimal_idx = np.argmax(youden_index)
-    # optimal_threshold = thresholds[optimal_idx]
+    # Compute Youden's J statistic
+    youden_index = tpr - fpr1
+    optimal_idx = np.argmax(youden_index)
+    optimal_threshold = thresholds[optimal_idx]
+    print(optimal_threshold)
 
     # # Plot ROC curve
     # plt.figure(figsize=(8, 6))
